@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: wireguard
+  namespace: vpn-core-vm
+spec:
+  type: LoadBalancer
+  selector:
+    app: wireguard
+  ports:
+    - name: wireguard-udp
+      port: 51820
+      targetPort: 51820
+      protocol: UDP
+
