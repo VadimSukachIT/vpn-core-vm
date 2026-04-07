@@ -65,6 +65,15 @@ def generate_public_key(private_key: str) -> str:
     return run_command(["wg", "pubkey"], stdin_text=f"{private_key}\n")
 
 
+def detect_default_interface() -> str:
+    routes_output = run_command(["ip", "-o", "route", "show", "default"])
+    for line in routes_output.splitlines():
+        parts = line.split()
+        if "dev" in parts:
+            return parts[parts.index("dev") + 1]
+    fail("Could not detect default network interface for WireGuard masquerade")
+
+
 def main() -> None:
     runtime_env_path = Path(
         os.environ.get("RUNTIME_ENV_PATH", "/opt/vpn-core-vm/runtime.env")
@@ -95,7 +104,9 @@ def main() -> None:
     wg_address = getenv(env, "WG_ADDRESS", "10.8.0.1/22")
     wg_network = getenv(env, "WG_NETWORK", "10.8.0.0/22")
     wg_listen_port = int(getenv(env, "WG_LISTEN_PORT", "51820"))
-    wg_masquerade_interface = getenv(env, "WG_MASQUERADE_INTERFACE", "eth0")
+    wg_masquerade_interface = getenv(env, "WG_MASQUERADE_INTERFACE")
+    if not wg_masquerade_interface:
+        wg_masquerade_interface = detect_default_interface()
     wg_peer_count = int(getenv(env, "WG_PEER_COUNT", "1000"))
     wg_endpoint = require_non_empty(getenv(env, "WG_ENDPOINT"), "WG_ENDPOINT")
     wg_client_dns = getenv(env, "WG_CLIENT_DNS", "1.1.1.1,1.0.0.1")
