@@ -183,8 +183,28 @@ show_status() {
   log "Service"
   k -n vpn-core-vm get svc wireguard
 
-  log "WireGuard status"
-  k -n vpn-core-vm exec deploy/wireguard -- wg show
+  log "WireGuard summary"
+  python3 - <<PY
+import json
+from pathlib import Path
+
+wg_config_path = Path(${WG_CONFIG_PATH@Q})
+peers_json_path = Path(${PEERS_JSON_PATH@Q})
+
+listen_port = "unknown"
+for line in wg_config_path.read_text().splitlines():
+    if line.startswith("ListenPort = "):
+        listen_port = line.split("=", 1)[1].strip()
+        break
+
+peers = json.loads(peers_json_path.read_text())
+
+print(f"interface: wg0")
+print(f"listen port: {listen_port}")
+print(f"peer count: {len(peers)}")
+print(f"wg config: {wg_config_path}")
+print(f"peers json: {peers_json_path}")
+PY
 }
 
 require_root

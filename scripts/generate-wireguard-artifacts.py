@@ -152,15 +152,23 @@ def main() -> None:
         "SaveConfig = false",
         (
             "PostUp = "
+            f"iptables -C FORWARD -i {wg_interface} -j ACCEPT || "
             f"iptables -A FORWARD -i {wg_interface} -j ACCEPT; "
+            f"iptables -C FORWARD -o {wg_interface} -j ACCEPT || "
             f"iptables -A FORWARD -o {wg_interface} -j ACCEPT; "
+            f"iptables -t nat -C POSTROUTING -s {wg_network} "
+            f"-o {wg_masquerade_interface} -j MASQUERADE || "
             f"iptables -t nat -A POSTROUTING -s {wg_network} "
             f"-o {wg_masquerade_interface} -j MASQUERADE"
         ),
         (
             "PostDown = "
+            f"iptables -C FORWARD -i {wg_interface} -j ACCEPT && "
             f"iptables -D FORWARD -i {wg_interface} -j ACCEPT; "
+            f"iptables -C FORWARD -o {wg_interface} -j ACCEPT && "
             f"iptables -D FORWARD -o {wg_interface} -j ACCEPT; "
+            f"iptables -t nat -C POSTROUTING -s {wg_network} "
+            f"-o {wg_masquerade_interface} -j MASQUERADE && "
             f"iptables -t nat -D POSTROUTING -s {wg_network} "
             f"-o {wg_masquerade_interface} -j MASQUERADE"
         ),
