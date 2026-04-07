@@ -1,17 +1,26 @@
-#!/bin/sh
-set -eu
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-ROOT_DIR="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
-RUNTIME_ENV_PATH="${RUNTIME_ENV_PATH:-${ROOT_DIR}/config/runtime.env}"
-WG_CONFIG_PATH="${WG_CONFIG_PATH:-${ROOT_DIR}/generated/wg0.conf}"
-SERVER_PRIVATE_KEY_PATH="${SERVER_PRIVATE_KEY_PATH:-${ROOT_DIR}/generated/server-private.key}"
-SERVER_PUBLIC_KEY_PATH="${SERVER_PUBLIC_KEY_PATH:-${ROOT_DIR}/generated/server-public.key}"
+PROJECT_DIR="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
+ROOT_DIR="${ROOT_DIR:-/opt/vpn-core-vm}"
+GENERATED_DIR="${GENERATED_DIR:-${ROOT_DIR}/generated}"
+RUNTIME_ENV_PATH="${RUNTIME_ENV_PATH:-${ROOT_DIR}/runtime.env}"
+WG_CONFIG_PATH="${WG_CONFIG_PATH:-${GENERATED_DIR}/wg0.conf}"
+PEERS_JSON_PATH="${PEERS_JSON_PATH:-${GENERATED_DIR}/peers.json}"
+SERVER_PRIVATE_KEY_PATH="${SERVER_PRIVATE_KEY_PATH:-${GENERATED_DIR}/server-private.key}"
+SERVER_PUBLIC_KEY_PATH="${SERVER_PUBLIC_KEY_PATH:-${GENERATED_DIR}/server-public.key}"
 IMAGE_NAME="${IMAGE_NAME:-vpn-core-vm-wireguard:latest}"
 IMAGE_TAR="${IMAGE_TAR:-/tmp/vpn-core-vm-wireguard.tar}"
 
 log() {
   printf '%s\n' "$*"
 }
+
+on_error() {
+  log "bootstrap-vm.sh failed at line $1"
+}
+
+trap 'on_error $LINENO' ERR
 
 k() {
   if command -v kubectl >/dev/null 2>&1; then
@@ -48,17 +57,6 @@ require_ubuntu() {
   fi
 }
 
-load_runtime_env() {
-  # shellcheck disable=SC1090
-  . "${RUNTIME_ENV_PATH}"
-
-  : "${WG_INTERFACE:=wg0}"
-  : "${WG_ADDRESS:=10.8.0.1/24}"
-  : "${WG_NETWORK:=10.8.0.0/24}"
-  : "${WG_LISTEN_PORT:=51820}"
-  : "${WG_MASQUERADE_INTERFACE:=eth0}"
-}
-
 install_docker_if_missing() {
   if command -v docker >/dev/null 2>&1; then
     return
@@ -87,6 +85,16 @@ install_wireguard_tools_if_missing() {
   apt-get install -y wireguard-tools
 }
 
+install_python3_if_missing() {
+  if command -v python3 >/dev/null 2>&1; then
+    return
+  fi
+
+  log "Installing python3 on host"
+  apt-get update
+  apt-get install -y python3
+}
+
 install_k3s_if_missing() {
   if command -v k3s >/dev/null 2>&1; then
     return
@@ -108,45 +116,36 @@ ensure_runtime_env() {
   fi
 
   log "Runtime env file not found: ${RUNTIME_ENV_PATH}"
-  log "Expected config/runtime.env to exist in the project."
+  log "Expected vpn-core to copy runtime config to ${RUNTIME_ENV_PATH} before bootstrap."
   exit 1
 }
 
-generate_wg_config_if_missing() {
-  mkdir -p "$(dirname "${WG_CONFIG_PATH}")"
+generate_wireguard_artifacts() {
+  log "Generating WireGuard artifacts"
+  mkdir -p "${GENERATED_DIR}"
 
-  if [ ! -f "${SERVER_PRIVATE_KEY_PATH}" ]; then
-    log "Generating server private key"
-    wg genkey > "${SERVER_PRIVATE_KEY_PATH}"
-    chmod 600 "${SERVER_PRIVATE_KEY_PATH}"
+  RUNTIME_ENV_PATH="${RUNTIME_ENV_PATH}" \
+  GENERATED_DIR="${GENERATED_DIR}" \
+  WG_CONFIG_PATH="${WG_CONFIG_PATH}" \
+  PEERS_JSON_PATH="${PEERS_JSON_PATH}" \
+  SERVER_PRIVATE_KEY_PATH="${SERVER_PRIVATE_KEY_PATH}" \
+  SERVER_PUBLIC_KEY_PATH="${SERVER_PUBLIC_KEY_PATH}" \
+  python3 "${PROJECT_DIR}/scripts/generate-wireguard-artifacts.py"
+
+  if [ ! -s "${WG_CONFIG_PATH}" ]; then
+    log "WireGuard config was not created: ${WG_CONFIG_PATH}"
+    exit 1
   fi
 
-  if [ ! -f "${SERVER_PUBLIC_KEY_PATH}" ]; then
-    log "Generating server public key"
-    wg pubkey < "${SERVER_PRIVATE_KEY_PATH}" > "${SERVER_PUBLIC_KEY_PATH}"
-    chmod 600 "${SERVER_PUBLIC_KEY_PATH}"
+  if [ ! -s "${PEERS_JSON_PATH}" ]; then
+    log "Peers metadata was not created: ${PEERS_JSON_PATH}"
+    exit 1
   fi
-
-  if [ -f "${WG_CONFIG_PATH}" ]; then
-    return
-  fi
-
-  log "Generating WireGuard config into ${WG_CONFIG_PATH}"
-  cat > "${WG_CONFIG_PATH}" <<EOF
-[Interface]
-Address = ${WG_ADDRESS}
-ListenPort = ${WG_LISTEN_PORT}
-PrivateKey = $(cat "${SERVER_PRIVATE_KEY_PATH}")
-SaveConfig = false
-PostUp = iptables -A FORWARD -i ${WG_INTERFACE} -j ACCEPT; iptables -A FORWARD -o ${WG_INTERFACE} -j ACCEPT; iptables -t nat -A POSTROUTING -s ${WG_NETWORK} -o ${WG_MASQUERADE_INTERFACE} -j MASQUERADE
-PostDown = iptables -D FORWARD -i ${WG_INTERFACE} -j ACCEPT; iptables -D FORWARD -o ${WG_INTERFACE} -j ACCEPT; iptables -t nat -D POSTROUTING -s ${WG_NETWORK} -o ${WG_MASQUERADE_INTERFACE} -j MASQUERADE
-EOF
-  chmod 600 "${WG_CONFIG_PATH}"
 }
 
 build_and_import_image() {
   log "Building image ${IMAGE_NAME}"
-  docker build -f "${ROOT_DIR}/docker/Dockerfile" -t "${IMAGE_NAME}" "${ROOT_DIR}"
+  docker build -f "${PROJECT_DIR}/docker/Dockerfile" -t "${IMAGE_NAME}" "${PROJECT_DIR}"
 
   log "Importing image into k3s"
   mkdir -p "$(dirname "${IMAGE_TAR}")"
@@ -160,7 +159,7 @@ apply_manifests() {
   export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
   log "Applying namespace"
-  k apply -f "${ROOT_DIR}/k3s/namespace.yaml"
+  k apply -f "${PROJECT_DIR}/k3s/namespace.yaml"
 
   log "Creating Secret from ${WG_CONFIG_PATH}"
   k -n vpn-core-vm create secret generic wireguard-config \
@@ -168,8 +167,8 @@ apply_manifests() {
     --dry-run=client -o yaml | k apply -f -
 
   log "Applying deployment and service"
-  k apply -f "${ROOT_DIR}/k3s/deployment.yaml"
-  k apply -f "${ROOT_DIR}/k3s/service.yaml"
+  k apply -f "${PROJECT_DIR}/k3s/deployment.yaml"
+  k apply -f "${PROJECT_DIR}/k3s/service.yaml"
 }
 
 show_status() {
@@ -192,12 +191,12 @@ require_root
 require_linux
 require_ubuntu
 ensure_runtime_env
-load_runtime_env
 install_wireguard_tools_if_missing
+install_python3_if_missing
 install_docker_if_missing
 install_k3s_if_missing
 wait_for_k3s
-generate_wg_config_if_missing
+generate_wireguard_artifacts
 build_and_import_image
 apply_manifests
 show_status

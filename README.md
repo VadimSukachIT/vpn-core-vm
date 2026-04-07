@@ -11,11 +11,11 @@
 - включает `ip_forward`
 - публикует UDP `51820`
 - позволяет одной командой развернуть runtime на Ubuntu VM через `bootstrap`-скрипт
+- генерирует server config и peer pool прямо во время provisioning
 
 Что пока не делаем:
 
 - создание VM через provider API
-- генерацию пула из 1000 конфигов
 - отправку конфигов в backend
 - блокировку доменов
 - ad-block
@@ -26,7 +26,7 @@
 ## Минимальная структура
 
 - `docker/` - контейнер WireGuard
-- `config/` - входные runtime-параметры
+- `config/runtime.env.example` - шаблон runtime-конфига
 - `generated/` - автоматически созданные файлы
 - `k3s/` - три manifest-файла для VM
 - `scripts/` - главный bootstrap-скрипт
@@ -36,15 +36,29 @@
 
 ### 1. Подготовить `runtime.env`
 
-Файл [config/runtime.env](/Users/vadimsukach/VSProjects/vpn-core-vm/config/runtime.env) уже лежит в репе.
+Шаблон лежит в [config/runtime.env.example](/Users/vadimsukach/VSProjects/vpn-core-vm/config/runtime.env.example).
 
-Если нужно, поменяй значения в нём перед деплоем.
+`vpn-core` должен копировать итоговый runtime config в:
+
+`/opt/vpn-core-vm/runtime.env`
+
+В публичную репу runtime-секреты не кладём.
 
 ### 2. Развернуть на Ubuntu VM одной командой
 
-Сначала положи репу на VM, потом на самой VM выполни:
+`vpn-core` уже делает такой сценарий:
+
+- удаляет `/opt/vpn-core-vm`
+- делает `git clone` репозитория в `/opt/vpn-core-vm`
+- копирует runtime config в `/opt/vpn-core-vm/runtime.env`
+- запускает `bash scripts/bootstrap-vm.sh`
+- скачивает `/opt/vpn-core-vm/generated/peers.json`
+- скачивает `/opt/vpn-core-vm/generated/wg0.conf`
+
+Если нужен ручной запуск, на VM выполни:
 
 ```bash
+cd /opt/vpn-core-vm
 sudo bash scripts/bootstrap-vm.sh
 ```
 
@@ -52,16 +66,17 @@ sudo bash scripts/bootstrap-vm.sh
 
 - проверяет Linux
 - ставит `k3s`, если его ещё нет
-- читает `config/runtime.env`
-- генерирует `generated/server-private.key`
-- генерирует `generated/server-public.key`
-- генерирует `generated/wg0.conf`
+- читает `/opt/vpn-core-vm/runtime.env`
+- выполняет полный setup окружения
+- генерирует `/opt/vpn-core-vm/generated/wg0.conf`
+- генерирует `/opt/vpn-core-vm/generated/peers.json`
 - собирает Docker image WireGuard
 - импортирует image в `k3s`
 - создаёт namespace
-- создаёт `Secret` из `generated/wg0.conf`
+- создаёт `Secret` из `/opt/vpn-core-vm/generated/wg0.conf`
 - применяет `Deployment` и `Service`
 - показывает pod и статус `wg0`
+- завершает provisioning с non-zero exit code при любой ошибке
 
 ### 3. Проверить, что runtime поднялся
 
@@ -74,7 +89,7 @@ kubectl -n vpn-core-vm exec deploy/wireguard -- ip addr show wg0
 
 ## Если всё же нужен локальный запуск
 
-Этот режим вторичный. Он нужен только если у тебя уже есть готовый `generated/wg0.conf`.
+Этот режим вторичный. Он нужен только если у тебя уже есть готовый `/opt/vpn-core-vm/generated/wg0.conf`.
 
 ```bash
 docker compose -f dev/docker-compose.yml up --build -d
@@ -85,9 +100,10 @@ docker compose -f dev/docker-compose.yml exec wireguard wg show
 
 - [docker/Dockerfile](/Users/vadimsukach/VSProjects/vpn-core-vm/docker/Dockerfile)
 - [docker/entrypoint.sh](/Users/vadimsukach/VSProjects/vpn-core-vm/docker/entrypoint.sh)
-- [config/runtime.env](/Users/vadimsukach/VSProjects/vpn-core-vm/config/runtime.env)
+- [config/runtime.env.example](/Users/vadimsukach/VSProjects/vpn-core-vm/config/runtime.env.example)
 - [generated](/Users/vadimsukach/VSProjects/vpn-core-vm/generated)
 - [scripts/bootstrap-vm.sh](/Users/vadimsukach/VSProjects/vpn-core-vm/scripts/bootstrap-vm.sh)
+- [scripts/generate-wireguard-artifacts.py](/Users/vadimsukach/VSProjects/vpn-core-vm/scripts/generate-wireguard-artifacts.py)
 - [k3s/namespace.yaml](/Users/vadimsukach/VSProjects/vpn-core-vm/k3s/namespace.yaml)
 - [k3s/deployment.yaml](/Users/vadimsukach/VSProjects/vpn-core-vm/k3s/deployment.yaml)
 - [k3s/service.yaml](/Users/vadimsukach/VSProjects/vpn-core-vm/k3s/service.yaml)
