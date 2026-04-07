@@ -20,10 +20,6 @@ spec:
         - name: wireguard
           image: vpn-core-vm-wireguard:latest
           imagePullPolicy: IfNotPresent
-          ports:
-            - name: wireguard-udp
-              containerPort: 51820
-              protocol: UDP
           securityContext:
             privileged: true
             capabilities:
