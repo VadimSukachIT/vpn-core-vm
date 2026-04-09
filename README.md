@@ -8,6 +8,8 @@
 
 - использует prebuilt контейнер с WireGuard runtime из `ghcr.io`
 - поднимает `wg0` через `wg-quick`
+- поднимает `node_exporter` на `:9100`
+- поднимает `kube-state-metrics` на `:8080`
 - включает `ip_forward`
 - публикует UDP `51820`
 - позволяет одной командой развернуть runtime на Ubuntu VM через `bootstrap`-скрипт
@@ -29,7 +31,9 @@
 - `config/runtime.env.example` - шаблон runtime-конфига
 - `generated/` - автоматически созданные файлы
 - `k3s/` - три manifest-файла для VM
+- `k3s/monitoring/` - monitoring exporters и RBAC
 - `scripts/` - главный bootstrap-скрипт
+- `scripts/cleanup-vm.sh` - teardown k3s-ресурсов на VM
 - `dev/` - локальный запуск уже готового runtime, если понадобится
 
 ## Главный сценарий
@@ -72,11 +76,18 @@ sudo bash scripts/bootstrap-vm.sh
 - генерирует `/opt/vpn-core-vm/generated/wg0.conf`
 - генерирует `/opt/vpn-core-vm/generated/peers.json`
 - создаёт namespace
+- применяет monitoring manifests на готовых официальных image
 - создаёт `Secret` из `/opt/vpn-core-vm/generated/wg0.conf`
 - применяет `Deployment` и `Service`
 - даёт `k3s` самому скачать последний image `ghcr.io`
-- показывает pod и короткий summary по WireGuard
+- ждёт `wireguard`, `node_exporter` и `kube-state-metrics`
+- показывает pod и короткий summary по runtime
 - завершает provisioning с non-zero exit code при любой ошибке
+
+Monitoring слой остаётся лёгким для VM с 1 GB RAM:
+
+- `node_exporter` работает как host-level DaemonSet на `:9100`
+- `kube-state-metrics` использует готовый image и ограниченный набор Kubernetes resources на `:8080`
 
 ### 3. Проверить, что runtime поднялся
 
@@ -85,6 +96,17 @@ kubectl -n vpn-core-vm get pods
 kubectl -n vpn-core-vm logs deployment/wireguard
 kubectl -n vpn-core-vm exec deploy/wireguard -- wg show
 kubectl -n vpn-core-vm exec deploy/wireguard -- ip addr show wg0
+curl http://<vm_ip>:9100/metrics | head
+curl http://<vm_ip>:8080/metrics | head
+```
+
+### 4. Cleanup
+
+Для полного teardown manifests, включая cluster-scoped RBAC от `kube-state-metrics`, на VM выполни:
+
+```bash
+cd /opt/vpn-core-vm
+sudo bash scripts/cleanup-vm.sh
 ```
 
 ## Если всё же нужен локальный запуск
@@ -103,7 +125,11 @@ docker compose -f dev/docker-compose.yml exec wireguard wg show
 - [config/runtime.env.example](/Users/vadimsukach/VSProjects/vpn-core-vm/config/runtime.env.example)
 - [generated](/Users/vadimsukach/VSProjects/vpn-core-vm/generated)
 - [scripts/bootstrap-vm.sh](/Users/vadimsukach/VSProjects/vpn-core-vm/scripts/bootstrap-vm.sh)
+- [scripts/cleanup-vm.sh](/Users/vadimsukach/VSProjects/vpn-core-vm/scripts/cleanup-vm.sh)
 - [scripts/generate-wireguard-artifacts.py](/Users/vadimsukach/VSProjects/vpn-core-vm/scripts/generate-wireguard-artifacts.py)
 - [k3s/namespace.yaml](/Users/vadimsukach/VSProjects/vpn-core-vm/k3s/namespace.yaml)
 - [k3s/deployment.yaml](/Users/vadimsukach/VSProjects/vpn-core-vm/k3s/deployment.yaml)
 - [k3s/service.yaml](/Users/vadimsukach/VSProjects/vpn-core-vm/k3s/service.yaml)
+- [k3s/monitoring/node-exporter.yaml](/Users/vadimsukach/VSProjects/vpn-core-vm/k3s/monitoring/node-exporter.yaml)
+- [k3s/monitoring/kube-state-metrics-rbac.yaml](/Users/vadimsukach/VSProjects/vpn-core-vm/k3s/monitoring/kube-state-metrics-rbac.yaml)
+- [k3s/monitoring/kube-state-metrics-deployment.yaml](/Users/vadimsukach/VSProjects/vpn-core-vm/k3s/monitoring/kube-state-metrics-deployment.yaml)

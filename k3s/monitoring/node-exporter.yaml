@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-exporter
+  namespace: vpn-core-vm
+spec:
+  selector:
+    matchLabels:
+      app: node-exporter
+  template:
+    metadata:
+      labels:
+        app: node-exporter
+    spec:
+      hostNetwork: true
+      hostPID: true
+      dnsPolicy: ClusterFirstWithHostNet
+      tolerations:
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: node-exporter
+          image: quay.io/prometheus/node-exporter:v1.8.2
+          imagePullPolicy: IfNotPresent
+          args:
+            - --web.listen-address=:9100
+            - --path.rootfs=/host
+            - --path.procfs=/host/proc
+            - --path.sysfs=/host/sys
+            - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/.+|run/credentials/.+)($|/)
+            - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|mqueue|nsfs|overlay|proc|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              memory: 96Mi
+          volumeMounts:
+            - name: root
+              mountPath: /host
+              readOnly: true
+              mountPropagation: HostToContainer
+            - name: proc
+              mountPath: /host/proc
+              readOnly: true
+            - name: sys
+              mountPath: /host/sys
+              readOnly: true
+      volumes:
+        - name: root
+          hostPath:
+            path: /
+            type: Directory
+        - name: proc
+          hostPath:
+            path: /proc
+            type: Directory
+        - name: sys
+          hostPath:
+            path: /sys
+            type: Directory

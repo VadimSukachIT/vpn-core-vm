@@ -153,6 +153,9 @@ apply_manifests() {
   log "Applying namespace"
   k apply -f "${PROJECT_DIR}/k3s/namespace.yaml"
 
+  log "Applying monitoring manifests"
+  k apply -f "${PROJECT_DIR}/k3s/monitoring"
+
   log "Creating Secret from ${WG_CONFIG_PATH}"
   k -n vpn-core-vm create secret generic wireguard-config \
     --from-file=wg0.conf="${WG_CONFIG_PATH}" \
@@ -166,8 +169,12 @@ apply_manifests() {
 show_status() {
   export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
-  log "Waiting for deployment"
+  log "Waiting for wireguard deployment"
   k -n vpn-core-vm rollout status deployment/wireguard --timeout=120s
+
+  log "Waiting for monitoring workloads"
+  k -n vpn-core-vm rollout status daemonset/node-exporter --timeout=120s
+  k -n vpn-core-vm rollout status deployment/kube-state-metrics --timeout=120s
 
   log "Pods"
   k -n vpn-core-vm get pods -o wide
@@ -175,7 +182,7 @@ show_status() {
   log "Service"
   k -n vpn-core-vm get svc wireguard
 
-  log "WireGuard summary"
+  log "Runtime summary"
   python3 - <<PY
 import json
 from pathlib import Path
@@ -196,6 +203,8 @@ print(f"listen port: {listen_port}")
 print(f"peer count: {len(peers)}")
 print(f"wg config: {wg_config_path}")
 print(f"peers json: {peers_json_path}")
+print("node exporter: :9100")
+print("kube-state-metrics: :8080")
 PY
 }
 

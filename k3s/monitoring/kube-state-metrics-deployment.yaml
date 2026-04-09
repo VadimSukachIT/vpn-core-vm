@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kube-state-metrics
+  namespace: vpn-core-vm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kube-state-metrics
+  template:
+    metadata:
+      labels:
+        app: kube-state-metrics
+    spec:
+      serviceAccountName: kube-state-metrics
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      tolerations:
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: kube-state-metrics
+          image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - --port=8080
+            - --telemetry-port=8081
+            - --resources=nodes,pods,services,deployments,daemonsets,statefulsets,replicasets,jobs,cronjobs,namespaces
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          resources:
+            requests:
+              cpu: 20m
+              memory: 48Mi
+            limits:
+              memory: 128Mi
