@@ -25,11 +25,9 @@ sysctl -w net.ipv4.conf.all.src_valid_mark=1 >/dev/null || true
 echo "Starting ${WG_INTERFACE} via wg-quick"
 wg-quick up "${WG_INTERFACE}"
 
-echo "WireGuard interface status"
-wg show "${WG_INTERFACE}" || true
-ip addr show "${WG_INTERFACE}" || true
+echo "WireGuard interface is up"
+wg show "${WG_INTERFACE}" endpoints >/dev/null 2>&1 || true
 
 echo "Container is ready; keeping process alive"
 tail -f /dev/null &
 wait $!
-

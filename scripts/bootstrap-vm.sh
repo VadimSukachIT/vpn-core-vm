@@ -9,8 +9,7 @@ WG_CONFIG_PATH="${WG_CONFIG_PATH:-${GENERATED_DIR}/wg0.conf}"
 PEERS_JSON_PATH="${PEERS_JSON_PATH:-${GENERATED_DIR}/peers.json}"
 SERVER_PRIVATE_KEY_PATH="${SERVER_PRIVATE_KEY_PATH:-${GENERATED_DIR}/server-private.key}"
 SERVER_PUBLIC_KEY_PATH="${SERVER_PUBLIC_KEY_PATH:-${GENERATED_DIR}/server-public.key}"
-IMAGE_NAME="${IMAGE_NAME:-ghcr.io/vadimsukachit/vpn-core-vm-wireguard:latest}"
-IMAGE_TAR="${IMAGE_TAR:-/tmp/vpn-core-vm-wireguard.tar}"
+APT_UPDATED="${APT_UPDATED:-0}"
 
 log() {
   printf '%s\n' "$*"
@@ -57,42 +56,47 @@ require_ubuntu() {
   fi
 }
 
-install_docker_if_missing() {
-  if command -v docker >/dev/null 2>&1; then
+apt_update_once() {
+  if [ "${APT_UPDATED}" -eq 1 ]; then
     return
   fi
 
-  log "Installing Docker"
   apt-get update
-  apt-get install -y ca-certificates curl
-  install -m 0755 -d /etc/apt/keyrings
-  curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-  chmod a+r /etc/apt/keyrings/docker.asc
-  . /etc/os-release
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" > /etc/apt/sources.list.d/docker.list
-  apt-get update
-  apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-  systemctl enable --now docker
+  APT_UPDATED=1
 }
 
-install_wireguard_tools_if_missing() {
-  if command -v wg >/dev/null 2>&1; then
-    return
-  fi
-
-  log "Installing wireguard-tools on host"
-  apt-get update
-  apt-get install -y wireguard-tools
+install_apt_packages() {
+  apt_update_once
+  apt-get install -y "$@"
 }
 
-install_python3_if_missing() {
-  if command -v python3 >/dev/null 2>&1; then
+install_host_dependencies_if_missing() {
+  packages=""
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    packages="${packages} python3"
+  fi
+
+  if ! command -v wg >/dev/null 2>&1; then
+    packages="${packages} wireguard-tools"
+  fi
+
+  if ! command -v k3s >/dev/null 2>&1; then
+    if ! dpkg -s ca-certificates >/dev/null 2>&1; then
+      packages="${packages} ca-certificates"
+    fi
+    if ! command -v curl >/dev/null 2>&1; then
+      packages="${packages} curl"
+    fi
+  fi
+
+  if [ -z "${packages}" ]; then
     return
   fi
 
-  log "Installing python3 on host"
-  apt-get update
-  apt-get install -y python3
+  log "Installing host dependencies:${packages}"
+  # shellcheck disable=SC2086
+  install_apt_packages ${packages}
 }
 
 install_k3s_if_missing() {
@@ -141,18 +145,6 @@ generate_wireguard_artifacts() {
     log "Peers metadata was not created: ${PEERS_JSON_PATH}"
     exit 1
   fi
-}
-
-pull_and_import_image() {
-  log "Pulling image ${IMAGE_NAME}"
-  docker pull "${IMAGE_NAME}"
-
-  log "Importing image into k3s"
-  mkdir -p "$(dirname "${IMAGE_TAR}")"
-  docker save "${IMAGE_NAME}" -o "${IMAGE_TAR}"
-  mkdir -p /var/lib/rancher/k3s/agent/images
-  cp "${IMAGE_TAR}" /var/lib/rancher/k3s/agent/images/
-  k3s ctr images import "${IMAGE_TAR}"
 }
 
 apply_manifests() {
@@ -211,12 +203,9 @@ require_root
 require_linux
 require_ubuntu
 ensure_runtime_env
-install_wireguard_tools_if_missing
-install_python3_if_missing
-install_docker_if_missing
+install_host_dependencies_if_missing
 install_k3s_if_missing
 wait_for_k3s
 generate_wireguard_artifacts
-pull_and_import_image
 apply_manifests
 show_status

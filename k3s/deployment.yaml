@@ -19,7 +19,7 @@ spec:
       containers:
         - name: wireguard
           image: ghcr.io/vadimsukachit/vpn-core-vm-wireguard:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           securityContext:
             privileged: true
             capabilities:
