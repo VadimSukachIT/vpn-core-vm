@@ -9,7 +9,7 @@ WG_CONFIG_PATH="${WG_CONFIG_PATH:-${GENERATED_DIR}/wg0.conf}"
 PEERS_JSON_PATH="${PEERS_JSON_PATH:-${GENERATED_DIR}/peers.json}"
 SERVER_PRIVATE_KEY_PATH="${SERVER_PRIVATE_KEY_PATH:-${GENERATED_DIR}/server-private.key}"
 SERVER_PUBLIC_KEY_PATH="${SERVER_PUBLIC_KEY_PATH:-${GENERATED_DIR}/server-public.key}"
-IMAGE_NAME="${IMAGE_NAME:-vpn-core-vm-wireguard:latest}"
+IMAGE_NAME="${IMAGE_NAME:-ghcr.io/vadimsukachit/vpn-core-vm-wireguard:latest}"
 IMAGE_TAR="${IMAGE_TAR:-/tmp/vpn-core-vm-wireguard.tar}"
 
 log() {
@@ -143,9 +143,9 @@ generate_wireguard_artifacts() {
   fi
 }
 
-build_and_import_image() {
-  log "Building image ${IMAGE_NAME}"
-  docker build -f "${PROJECT_DIR}/docker/Dockerfile" -t "${IMAGE_NAME}" "${PROJECT_DIR}"
+pull_and_import_image() {
+  log "Pulling image ${IMAGE_NAME}"
+  docker pull "${IMAGE_NAME}"
 
   log "Importing image into k3s"
   mkdir -p "$(dirname "${IMAGE_TAR}")"
@@ -217,6 +217,6 @@ install_docker_if_missing
 install_k3s_if_missing
 wait_for_k3s
 generate_wireguard_artifacts
-build_and_import_image
+pull_and_import_image
 apply_manifests
 show_status
