@@ -57,8 +57,26 @@ require_k3s() {
 }
 
 wait_for_node() {
+  local attempt=0
+  local max_attempts=60
+
   export KUBECONFIG="${KUBECONFIG_PATH}"
   log "Waiting for node readiness"
+
+  while [ "${attempt}" -lt "${max_attempts}" ]; do
+    if k get nodes --no-headers 2>/dev/null | grep -q .; then
+      break
+    fi
+
+    attempt=$((attempt + 1))
+    sleep 2
+  done
+
+  if ! k get nodes --no-headers 2>/dev/null | grep -q .; then
+    log "k3s node resource did not appear in time."
+    exit 1
+  fi
+
   k wait --for=condition=Ready node --all --timeout=120s
 }
 

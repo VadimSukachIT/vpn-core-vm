@@ -143,8 +143,26 @@ install_k3s_if_missing() {
 }
 
 wait_for_k3s() {
+  local attempt=0
+  local max_attempts=60
+
   log "Waiting for k3s node readiness"
   export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+
+  while [ "${attempt}" -lt "${max_attempts}" ]; do
+    if k get nodes --no-headers 2>/dev/null | grep -q .; then
+      break
+    fi
+
+    attempt=$((attempt + 1))
+    sleep 2
+  done
+
+  if ! k get nodes --no-headers 2>/dev/null | grep -q .; then
+    log "k3s node resource did not appear in time."
+    exit 1
+  fi
+
   k wait --for=condition=Ready node --all --timeout=120s
 }
 
