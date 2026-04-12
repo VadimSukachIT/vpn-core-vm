@@ -79,7 +79,7 @@ def main() -> None:
         os.environ.get("RUNTIME_ENV_PATH", "/opt/vpn-core-vm/runtime.env")
     )
     generated_dir = Path(
-        os.environ.get("GENERATED_DIR", "/opt/vpn-core-vm/generated")
+        os.environ.get("GENERATED_DIR", "/conf/vpn-core-vm")
     )
     wg_config_path = Path(
         os.environ.get("WG_CONFIG_PATH", str(generated_dir / "wg0.conf"))
@@ -101,8 +101,8 @@ def main() -> None:
     env = load_env_file(runtime_env_path)
 
     wg_interface = getenv(env, "WG_INTERFACE", "wg0")
-    wg_address = getenv(env, "WG_ADDRESS", "10.8.0.1/22")
-    wg_network = getenv(env, "WG_NETWORK", "10.8.0.0/22")
+    wg_address = getenv(env, "WG_ADDRESS", "10.8.0.1/12")
+    wg_network = getenv(env, "WG_NETWORK", "10.8.0.0/12")
     wg_listen_port = int(getenv(env, "WG_LISTEN_PORT", "51820"))
     wg_masquerade_interface = getenv(env, "WG_MASQUERADE_INTERFACE")
     if not wg_masquerade_interface:

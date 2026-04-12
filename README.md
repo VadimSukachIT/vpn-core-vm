@@ -29,11 +29,11 @@
 
 - `docker/` - контейнер WireGuard
 - `config/runtime.env.example` - шаблон runtime-конфига
-- `generated/` - автоматически созданные файлы
 - `k3s/` - три manifest-файла для VM
 - `k3s/monitoring/` - monitoring exporters и RBAC
 - `scripts/` - главный bootstrap-скрипт
 - `scripts/cleanup-vm.sh` - teardown k3s-ресурсов на VM
+- `scripts/deploy-vm.sh` - rollout конкретного wireguard image tag на VM
 - `dev/` - локальный запуск уже готового runtime, если понадобится
 
 ## Главный сценарий
@@ -56,8 +56,8 @@
 - делает `git clone` репозитория в `/opt/vpn-core-vm`
 - копирует runtime config в `/opt/vpn-core-vm/runtime.env`
 - запускает `bash scripts/bootstrap-vm.sh`
-- скачивает `/opt/vpn-core-vm/generated/peers.json`
-- скачивает `/opt/vpn-core-vm/generated/wg0.conf`
+- скачивает `/conf/vpn-core-vm/peers.json`
+- использует `/conf/vpn-core-vm/wg0.conf` как persistent runtime state на VM
 
 Если нужен ручной запуск, на VM выполни:
 
@@ -71,15 +71,17 @@ sudo bash scripts/bootstrap-vm.sh
 - проверяет Linux
 - ставит `python3` и `wireguard-tools`, если их ещё нет
 - ставит `k3s`, если его ещё нет
+- отключает в `k3s` лишние baseline addons: `traefik`, `servicelb`, `metrics-server`, `local-storage`
 - читает `/opt/vpn-core-vm/runtime.env`
 - выполняет полный setup окружения
-- генерирует `/opt/vpn-core-vm/generated/wg0.conf`
-- генерирует `/opt/vpn-core-vm/generated/peers.json`
+- создаёт `/conf/vpn-core-vm/`, если его ещё нет
+- генерирует `/conf/vpn-core-vm/wg0.conf`
+- генерирует `/conf/vpn-core-vm/peers.json`
 - создаёт namespace
 - применяет monitoring manifests на готовых официальных image
-- создаёт `Secret` из `/opt/vpn-core-vm/generated/wg0.conf`
+- создаёт `Secret` из `/conf/vpn-core-vm/wg0.conf`
 - применяет `Deployment` и `Service`
-- даёт `k3s` самому скачать последний image `ghcr.io`
+- выставляет wireguard image ровно в `ghcr.io/vadimsukachit/vpn-core-vm-wireguard:<imageTag>`
 - ждёт `wireguard`, `node_exporter` и `kube-state-metrics`
 - показывает pod и короткий summary по runtime
 - завершает provisioning с non-zero exit code при любой ошибке
@@ -88,6 +90,7 @@ Monitoring слой остаётся лёгким для VM с 1 GB RAM:
 
 - `node_exporter` работает как host-level DaemonSet на `:9100`
 - `kube-state-metrics` использует готовый image и ограниченный набор Kubernetes resources на `:8080`
+- из стандартных компонентов `k3s` сохраняется `coredns`, потому что он нужен рабочему cluster networking/DNS flow
 
 ### 3. Проверить, что runtime поднялся
 
@@ -109,9 +112,23 @@ cd /opt/vpn-core-vm
 sudo bash scripts/cleanup-vm.sh
 ```
 
+Этот cleanup также удаляет `k3s` config из `/etc/rancher/k3s/config.yaml`, который отключает лишние baseline addons.
+Persistent runtime state в `/conf/vpn-core-vm/` он тоже удаляет, потому что это сценарий полного teardown VM.
+
+### 5. Deploy Specific Image
+
+Если control-plane уже собрал и запушил image с конкретным tag, на VM можно раскатить его так:
+
+```bash
+cd /opt/vpn-core-vm
+sudo bash scripts/deploy-vm.sh <imageTag>
+```
+
+Скрипт обновляет только wireguard deployment до `ghcr.io/vadimsukachit/vpn-core-vm-wireguard:<imageTag>`, ждёт rollout и проверяет, что monitoring workloads не сломались.
+
 ## Если всё же нужен локальный запуск
 
-Этот режим вторичный. Он нужен только если у тебя уже есть готовый `/opt/vpn-core-vm/generated/wg0.conf`.
+Этот режим вторичный. Он нужен только если у тебя уже есть готовый `/conf/vpn-core-vm/wg0.conf`.
 
 ```bash
 docker compose -f dev/docker-compose.yml up --build -d
@@ -123,9 +140,9 @@ docker compose -f dev/docker-compose.yml exec wireguard wg show
 - [docker/Dockerfile](/Users/vadimsukach/VSProjects/vpn-core-vm/docker/Dockerfile)
 - [docker/entrypoint.sh](/Users/vadimsukach/VSProjects/vpn-core-vm/docker/entrypoint.sh)
 - [config/runtime.env.example](/Users/vadimsukach/VSProjects/vpn-core-vm/config/runtime.env.example)
-- [generated](/Users/vadimsukach/VSProjects/vpn-core-vm/generated)
 - [scripts/bootstrap-vm.sh](/Users/vadimsukach/VSProjects/vpn-core-vm/scripts/bootstrap-vm.sh)
 - [scripts/cleanup-vm.sh](/Users/vadimsukach/VSProjects/vpn-core-vm/scripts/cleanup-vm.sh)
+- [scripts/deploy-vm.sh](/Users/vadimsukach/VSProjects/vpn-core-vm/scripts/deploy-vm.sh)
 - [scripts/generate-wireguard-artifacts.py](/Users/vadimsukach/VSProjects/vpn-core-vm/scripts/generate-wireguard-artifacts.py)
 - [k3s/namespace.yaml](/Users/vadimsukach/VSProjects/vpn-core-vm/k3s/namespace.yaml)
 - [k3s/deployment.yaml](/Users/vadimsukach/VSProjects/vpn-core-vm/k3s/deployment.yaml)

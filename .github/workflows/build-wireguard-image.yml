@@ -4,6 +4,12 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Image tag to publish, for example deploy-abc1234-123456789
+        required: true
+        type: string
 
 env:
   IMAGE_REPOSITORY: ghcr.io/vadimsukachit/vpn-core-vm-wireguard
@@ -31,7 +37,13 @@ jobs:
 
       - name: Compute short SHA tag
         id: vars
-        run: echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "image_tag=${{ github.event.inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "image_tag=deploy-${GITHUB_SHA::7}-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build and push image
         uses: docker/build-push-action@v6
@@ -41,4 +53,5 @@ jobs:
           push: true
           tags: |
             ${{ env.IMAGE_REPOSITORY }}:latest
+            ${{ env.IMAGE_REPOSITORY }}:${{ steps.vars.outputs.image_tag }}
             ${{ env.IMAGE_REPOSITORY }}:sha-${{ steps.vars.outputs.short_sha }}

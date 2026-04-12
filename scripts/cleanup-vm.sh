@@ -2,6 +2,8 @@
 set -Eeuo pipefail
 
 PROJECT_DIR="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
+K3S_CONFIG_PATH="${K3S_CONFIG_PATH:-/etc/rancher/k3s/config.yaml}"
+GENERATED_DIR="${GENERATED_DIR:-/conf/vpn-core-vm}"
 
 log() {
   printf '%s\n' "$*"
@@ -47,6 +49,26 @@ cleanup_manifests() {
   k delete -f "${PROJECT_DIR}/k3s/namespace.yaml" --ignore-not-found=true
 }
 
+cleanup_k3s_config() {
+  if [ ! -f "${K3S_CONFIG_PATH}" ]; then
+    return
+  fi
+
+  log "Removing k3s config"
+  rm -f "${K3S_CONFIG_PATH}"
+}
+
+cleanup_runtime_state() {
+  if [ ! -d "${GENERATED_DIR}" ]; then
+    return
+  fi
+
+  log "Removing persistent runtime state"
+  rm -rf "${GENERATED_DIR}"
+}
+
 require_root
 require_linux
 cleanup_manifests
+cleanup_k3s_config
+cleanup_runtime_state

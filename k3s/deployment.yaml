@@ -18,7 +18,7 @@ spec:
       terminationGracePeriodSeconds: 10
       containers:
         - name: wireguard
-          image: ghcr.io/vadimsukachit/vpn-core-vm-wireguard:latest
+          image: ghcr.io/vadimsukachit/vpn-core-vm-wireguard:bootstrap-placeholder
           imagePullPolicy: Always
           securityContext:
             privileged: true
