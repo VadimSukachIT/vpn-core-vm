@@ -7,11 +7,11 @@
 На этом этапе проект делает только базу:
 
 - использует prebuilt контейнер с WireGuard runtime из `ghcr.io`
-- поднимает `wg0` через `wg-quick`
-- поднимает `node_exporter` на `:9100`
-- поднимает `kube-state-metrics` на `:8080`
+- поднимает WireGuard interface из runtime config через `wg-quick`
+- поднимает `node_exporter` на порту из runtime config
+- поднимает `kube-state-metrics` на порту из runtime config
 - включает `ip_forward`
-- публикует UDP `51820`
+- публикует WireGuard UDP port из runtime config
 - позволяет одной командой развернуть runtime на Ubuntu VM через `bootstrap`-скрипт
 - генерирует server config и peer pool прямо во время provisioning
 
@@ -83,13 +83,16 @@ sudo bash scripts/bootstrap-vm.sh
 - применяет `Deployment` и `Service`
 - выставляет wireguard image ровно в `ghcr.io/vadimsukachit/vpn-core-vm-wireguard:<imageTag>`
 - ждёт `wireguard`, `node_exporter` и `kube-state-metrics`
+- верифицирует runtime локально на VM:
+  `wireguard pod ready`, `WG_INTERFACE exists`, `NODE_EXPORTER_PORT`, `KUBE_STATE_METRICS_PORT`, `PING_TARGET`
+- если verify падает, сам вызывает `scripts/cleanup-vm.sh` и завершает bootstrap с non-zero
 - показывает pod и короткий summary по runtime
 - завершает provisioning с non-zero exit code при любой ошибке
 
 Monitoring слой остаётся лёгким для VM с 1 GB RAM:
 
-- `node_exporter` работает как host-level DaemonSet на `:9100`
-- `kube-state-metrics` использует готовый image и ограниченный набор Kubernetes resources на `:8080`
+- `node_exporter` работает как host-level DaemonSet на `NODE_EXPORTER_PORT`
+- `kube-state-metrics` использует готовый image и ограниченный набор Kubernetes resources на `KUBE_STATE_METRICS_PORT`
 - из стандартных компонентов `k3s` сохраняется `coredns`, потому что он нужен рабочему cluster networking/DNS flow
 
 ### 3. Проверить, что runtime поднялся
@@ -98,9 +101,9 @@ Monitoring слой остаётся лёгким для VM с 1 GB RAM:
 kubectl -n vpn-core-vm get pods
 kubectl -n vpn-core-vm logs deployment/wireguard
 kubectl -n vpn-core-vm exec deploy/wireguard -- wg show
-kubectl -n vpn-core-vm exec deploy/wireguard -- ip addr show wg0
-curl http://<vm_ip>:9100/metrics | head
-curl http://<vm_ip>:8080/metrics | head
+kubectl -n vpn-core-vm exec deploy/wireguard -- ip addr show <wg_interface_from_runtime_env>
+curl http://<vm_ip>:<node_exporter_port_from_runtime_env>/metrics | head
+curl http://<vm_ip>:<kube_state_metrics_port_from_runtime_env>/metrics | head
 ```
 
 ### 4. Cleanup

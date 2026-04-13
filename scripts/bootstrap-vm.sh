@@ -12,17 +12,35 @@ SERVER_PUBLIC_KEY_PATH="${SERVER_PUBLIC_KEY_PATH:-${GENERATED_DIR}/server-public
 IMAGE_REPOSITORY="${IMAGE_REPOSITORY:-ghcr.io/vadimsukachit/vpn-core-vm-wireguard}"
 RUNTIME_IMAGE_TAG="${RUNTIME_IMAGE_TAG:-}"
 IMAGE_NAME=""
+WG_INTERFACE="${WG_INTERFACE:-}"
+WG_LISTEN_PORT="${WG_LISTEN_PORT:-}"
+NODE_EXPORTER_PORT="${NODE_EXPORTER_PORT:-}"
+KUBE_STATE_METRICS_PORT="${KUBE_STATE_METRICS_PORT:-}"
+KUBE_STATE_METRICS_TELEMETRY_PORT="${KUBE_STATE_METRICS_TELEMETRY_PORT:-}"
+PING_TARGET="${PING_TARGET:-}"
+WG_CONFIG_SECRET_KEY=""
+WG_RUNTIME_CONFIG_MOUNT_PATH=""
 APT_UPDATED="${APT_UPDATED:-0}"
 K3S_CONFIG_DIR="${K3S_CONFIG_DIR:-/etc/rancher/k3s}"
 K3S_CONFIG_PATH="${K3S_CONFIG_PATH:-${K3S_CONFIG_DIR}/config.yaml}"
 K3S_CONFIG_CHANGED=0
+BOOTSTRAP_CLEANUP_ON_ERROR=1
 
 log() {
   printf '%s\n' "$*"
 }
 
 on_error() {
+  set +e
   log "bootstrap-vm.sh failed at line $1"
+
+  if [ "${BOOTSTRAP_CLEANUP_ON_ERROR}" -eq 1 ]; then
+    BOOTSTRAP_CLEANUP_ON_ERROR=0
+    log "Running cleanup-vm.sh after bootstrap failure"
+    bash "${PROJECT_DIR}/scripts/cleanup-vm.sh" || log "cleanup-vm.sh failed"
+  fi
+
+  exit 1
 }
 
 trap 'on_error $LINENO' ERR
@@ -83,6 +101,10 @@ install_host_dependencies_if_missing() {
     packages="${packages} python3"
   fi
 
+  if ! command -v curl >/dev/null 2>&1; then
+    packages="${packages} curl"
+  fi
+
   if ! command -v wg >/dev/null 2>&1; then
     packages="${packages} wireguard-tools"
   fi
@@ -90,9 +112,6 @@ install_host_dependencies_if_missing() {
   if ! command -v k3s >/dev/null 2>&1; then
     if ! dpkg -s ca-certificates >/dev/null 2>&1; then
       packages="${packages} ca-certificates"
-    fi
-    if ! command -v curl >/dev/null 2>&1; then
-      packages="${packages} curl"
     fi
   fi
 
@@ -177,6 +196,13 @@ ensure_runtime_env() {
 }
 
 load_runtime_contract() {
+  if [ -f "${RUNTIME_ENV_PATH}" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "${RUNTIME_ENV_PATH}"
+    set +a
+  fi
+
   if [ -z "${RUNTIME_IMAGE_TAG}" ] && [ -f "${RUNTIME_ENV_PATH}" ]; then
     RUNTIME_IMAGE_TAG="$(
       sed -n 's/^RUNTIME_IMAGE_TAG=//p' "${RUNTIME_ENV_PATH}" | tail -n 1
@@ -188,7 +214,19 @@ load_runtime_contract() {
     exit 1
   fi
 
+  : "${WG_INTERFACE:=wg0}"
+  : "${WG_LISTEN_PORT:=51820}"
+  : "${NODE_EXPORTER_PORT:=9100}"
+  : "${KUBE_STATE_METRICS_PORT:=8080}"
+  : "${PING_TARGET:=1.1.1.1}"
+
+  if [ -z "${KUBE_STATE_METRICS_TELEMETRY_PORT}" ]; then
+    KUBE_STATE_METRICS_TELEMETRY_PORT="$((KUBE_STATE_METRICS_PORT + 1))"
+  fi
+
   IMAGE_NAME="${IMAGE_REPOSITORY}:${RUNTIME_IMAGE_TAG}"
+  WG_CONFIG_SECRET_KEY="${WG_INTERFACE}.conf"
+  WG_RUNTIME_CONFIG_MOUNT_PATH="/etc/wireguard/${WG_INTERFACE}.conf"
 }
 
 generate_wireguard_artifacts() {
@@ -225,12 +263,96 @@ apply_manifests() {
 
   log "Creating Secret from ${WG_CONFIG_PATH}"
   k -n vpn-core-vm create secret generic wireguard-config \
-    --from-file=wg0.conf="${WG_CONFIG_PATH}" \
+    --from-file="${WG_CONFIG_SECRET_KEY}=${WG_CONFIG_PATH}" \
     --dry-run=client -o yaml | k apply -f -
 
   log "Applying deployment and service"
   k apply -f "${PROJECT_DIR}/k3s/deployment.yaml"
   k apply -f "${PROJECT_DIR}/k3s/service.yaml"
+
+  log "Configuring runtime resources from runtime.env"
+  k -n vpn-core-vm patch deployment wireguard --type='merge' -p "$(cat <<EOF
+{
+  "spec": {
+    "template": {
+      "spec": {
+        "containers": [
+          {
+            "name": "wireguard",
+            "env": [
+              {
+                "name": "WG_CONFIG_PATH",
+                "value": "${WG_RUNTIME_CONFIG_MOUNT_PATH}"
+              },
+              {
+                "name": "WG_INTERFACE",
+                "value": "${WG_INTERFACE}"
+              }
+            ],
+            "volumeMounts": [
+              {
+                "name": "wireguard-config",
+                "mountPath": "${WG_RUNTIME_CONFIG_MOUNT_PATH}",
+                "subPath": "${WG_CONFIG_SECRET_KEY}",
+                "readOnly": true
+              },
+              {
+                "name": "lib-modules",
+                "mountPath": "/lib/modules",
+                "readOnly": true
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}
+EOF
+)"
+
+  k -n vpn-core-vm patch service wireguard --type='merge' -p "$(cat <<EOF
+{
+  "spec": {
+    "ports": [
+      {
+        "name": "wireguard-udp",
+        "port": ${WG_LISTEN_PORT},
+        "targetPort": ${WG_LISTEN_PORT},
+        "protocol": "UDP"
+      }
+    ]
+  }
+}
+EOF
+)"
+
+  k -n vpn-core-vm patch daemonset node-exporter --type='json' -p="$(cat <<EOF
+[
+  {
+    "op": "replace",
+    "path": "/spec/template/spec/containers/0/args/0",
+    "value": "--web.listen-address=:${NODE_EXPORTER_PORT}"
+  }
+]
+EOF
+)"
+
+  k -n vpn-core-vm patch deployment kube-state-metrics --type='json' -p="$(cat <<EOF
+[
+  {
+    "op": "replace",
+    "path": "/spec/template/spec/containers/0/args/0",
+    "value": "--port=${KUBE_STATE_METRICS_PORT}"
+  },
+  {
+    "op": "replace",
+    "path": "/spec/template/spec/containers/0/args/1",
+    "value": "--telemetry-port=${KUBE_STATE_METRICS_TELEMETRY_PORT}"
+  }
+]
+EOF
+)"
 
   log "Updating wireguard image to ${IMAGE_NAME}"
   k -n vpn-core-vm set image deployment/wireguard wireguard="${IMAGE_NAME}"
@@ -268,15 +390,34 @@ for line in wg_config_path.read_text().splitlines():
 
 peers = json.loads(peers_json_path.read_text())
 
-print(f"interface: wg0")
+print(f"interface: ${WG_INTERFACE@Q}")
 print(f"listen port: {listen_port}")
 print(f"peer count: {len(peers)}")
 print(f"wg config: {wg_config_path}")
 print(f"peers json: {peers_json_path}")
 print(f"wireguard image: ${IMAGE_NAME@Q}")
-print("node exporter: :9100")
-print("kube-state-metrics: :8080")
+print(f"node exporter: :${NODE_EXPORTER_PORT}")
+print(f"kube-state-metrics: :${KUBE_STATE_METRICS_PORT}")
 PY
+}
+
+verify_runtime() {
+  export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+
+  log "Verifying wireguard pod readiness"
+  k -n vpn-core-vm wait --for=condition=Ready pod -l app=wireguard --timeout=60s
+
+  log "Verifying ${WG_INTERFACE} exists"
+  k -n vpn-core-vm exec deploy/wireguard -- ip link show "${WG_INTERFACE}" >/dev/null
+
+  log "Verifying node-exporter endpoint"
+  curl -fsS --max-time 5 "http://127.0.0.1:${NODE_EXPORTER_PORT}/metrics" >/dev/null
+
+  log "Verifying kube-state-metrics endpoint"
+  curl -fsS --max-time 5 "http://127.0.0.1:${KUBE_STATE_METRICS_PORT}/metrics" >/dev/null
+
+  log "Verifying outbound network from wireguard runtime"
+  k -n vpn-core-vm exec deploy/wireguard -- ping -c 1 -W 5 "${PING_TARGET}" >/dev/null
 }
 
 require_root
@@ -290,3 +431,5 @@ wait_for_k3s
 generate_wireguard_artifacts
 apply_manifests
 show_status
+verify_runtime
+BOOTSTRAP_CLEANUP_ON_ERROR=0
