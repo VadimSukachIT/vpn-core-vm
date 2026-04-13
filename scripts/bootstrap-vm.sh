@@ -271,7 +271,7 @@ apply_manifests() {
   k apply -f "${PROJECT_DIR}/k3s/service.yaml"
 
   log "Configuring runtime resources from runtime.env"
-  k -n vpn-core-vm patch deployment wireguard --type='merge' -p "$(cat <<EOF
+  k -n vpn-core-vm patch deployment wireguard --type='strategic' -p "$(cat <<EOF
 {
   "spec": {
     "template": {
