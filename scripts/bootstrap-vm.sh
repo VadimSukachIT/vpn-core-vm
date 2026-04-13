@@ -30,6 +30,18 @@ log() {
   printf '%s\n' "$*"
 }
 
+require_non_empty() {
+  local value="$1"
+  local key="$2"
+
+  if [ -n "${value}" ]; then
+    return
+  fi
+
+  log "Required runtime parameter is missing: ${key}"
+  exit 1
+}
+
 on_error() {
   set +e
   log "bootstrap-vm.sh failed at line $1"
@@ -210,15 +222,14 @@ load_runtime_contract() {
   fi
 
   if [ -z "${RUNTIME_IMAGE_TAG}" ]; then
-    log "RUNTIME_IMAGE_TAG is required for bootstrap."
-    exit 1
+    require_non_empty "" "RUNTIME_IMAGE_TAG"
   fi
 
-  : "${WG_INTERFACE:=wg0}"
-  : "${WG_LISTEN_PORT:=51820}"
-  : "${NODE_EXPORTER_PORT:=9100}"
-  : "${KUBE_STATE_METRICS_PORT:=8080}"
-  : "${PING_TARGET:=1.1.1.1}"
+  require_non_empty "${WG_INTERFACE}" "WG_INTERFACE"
+  require_non_empty "${WG_LISTEN_PORT}" "WG_LISTEN_PORT"
+  require_non_empty "${NODE_EXPORTER_PORT}" "NODE_EXPORTER_PORT"
+  require_non_empty "${KUBE_STATE_METRICS_PORT}" "KUBE_STATE_METRICS_PORT"
+  require_non_empty "${PING_TARGET}" "PING_TARGET"
 
   if [ -z "${KUBE_STATE_METRICS_TELEMETRY_PORT}" ]; then
     KUBE_STATE_METRICS_TELEMETRY_PORT="$((KUBE_STATE_METRICS_PORT + 1))"

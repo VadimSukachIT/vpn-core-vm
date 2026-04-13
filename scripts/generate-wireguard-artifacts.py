@@ -44,6 +44,14 @@ def require_non_empty(value: str, key: str) -> str:
     return value
 
 
+def require_int(env: Dict[str, str], key: str) -> int:
+    value = require_non_empty(getenv(env, key), key)
+    try:
+        return int(value)
+    except ValueError:
+        fail(f"Setting must be an integer: {key}")
+
+
 def run_command(argv: List[str], stdin_text: Optional[str] = None) -> str:
     result = subprocess.run(
         argv,
@@ -100,18 +108,18 @@ def main() -> None:
 
     env = load_env_file(runtime_env_path)
 
-    wg_interface = getenv(env, "WG_INTERFACE", "wg0")
-    wg_address = getenv(env, "WG_ADDRESS", "10.8.0.1/12")
-    wg_network = getenv(env, "WG_NETWORK", "10.8.0.0/12")
-    wg_listen_port = int(getenv(env, "WG_LISTEN_PORT", "51820"))
+    wg_interface = require_non_empty(getenv(env, "WG_INTERFACE"), "WG_INTERFACE")
+    wg_address = require_non_empty(getenv(env, "WG_ADDRESS"), "WG_ADDRESS")
+    wg_network = require_non_empty(getenv(env, "WG_NETWORK"), "WG_NETWORK")
+    wg_listen_port = require_int(env, "WG_LISTEN_PORT")
     wg_masquerade_interface = getenv(env, "WG_MASQUERADE_INTERFACE")
     if not wg_masquerade_interface:
         wg_masquerade_interface = detect_default_interface()
-    wg_peer_count = int(getenv(env, "WG_PEER_COUNT", "1000"))
+    wg_peer_count = require_int(env, "WG_PEER_COUNT")
     wg_endpoint = require_non_empty(getenv(env, "WG_ENDPOINT"), "WG_ENDPOINT")
-    wg_client_dns = getenv(env, "WG_CLIENT_DNS", "1.1.1.1,1.0.0.1")
-    wg_allowed_ips = getenv(env, "WG_ALLOWED_IPS", "0.0.0.0/0,::/0")
-    wg_persistent_keepalive = int(getenv(env, "WG_PERSISTENT_KEEPALIVE", "25"))
+    wg_client_dns = require_non_empty(getenv(env, "WG_CLIENT_DNS"), "WG_CLIENT_DNS")
+    wg_allowed_ips = require_non_empty(getenv(env, "WG_ALLOWED_IPS"), "WG_ALLOWED_IPS")
+    wg_persistent_keepalive = require_int(env, "WG_PERSISTENT_KEEPALIVE")
     wg_peer_status = getenv(env, "WG_PEER_STATUS", "")
 
     if wg_peer_count <= 0:
